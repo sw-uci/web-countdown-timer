@@ -1,0 +1,657 @@
+<head>
+	<style>
+		*
+		{
+			font-family: Verdana, sans-serif;
+		}
+
+		html,
+		body
+		{
+			margin: 0;
+		}
+
+		#minutebox,
+		#secondbox
+		{
+			font-family: LCD2, Verdana, sans-serif;
+			font-size: 35px;
+
+			width: 150px;
+			margin: 0;
+			padding: 3px;
+
+			border: 1px solid lightblue;
+			outline: none;
+		}
+
+		#minutebox
+		{
+			float: left;
+
+			text-align: right;
+
+			border-right: 1px dashed lightblue;
+			border-top-left-radius: 10px;
+		}
+
+		#secondbox
+		{
+			float: right;
+
+			text-align: left;
+
+			border-left: 0;
+			border-top-right-radius: 10px;
+		}
+
+		#minutebox:disabled,
+		#secondbox:disabled
+		{
+			border: 1px solid #808080;
+			background: lightgray;
+		}
+
+		#minutebox:disabled
+		{
+			border-right: 1px dashed gray;
+		}
+
+		#secondbox:disabled
+		{
+			border-left: 0;
+		}
+
+		#timerbutton,
+		#restartbutton,
+		#clearbutton
+		{
+			float: left;
+
+			box-sizing: border-box;
+			width: 100px;
+			height: 44px;
+			margin: 0;
+			padding: 0;
+
+			border: 1px solid #a9a9a9;
+			border-bottom: 3px solid #a9a9a9;
+			border-bottom-left-radius: 1px;
+			/* weird border issue in safari 5.1 */
+			background-color: #f0f0f0;
+		}
+
+		#timerbutton:hover,
+		#restartbutton:hover,
+		#clearbutton:hover
+		{
+			background-color: #fafafa;
+		}
+
+		#timerbutton:disabled,
+		#restartbutton:disabled,
+		#clearbutton:disabled
+		{
+			border-color: #808080;
+			border-bottom: 3px solid #646464;
+			background-color: lightgray;
+		}
+
+		#timerbutton:active,
+		#restartbutton:active,
+		#clearbutton:active
+		{
+			border-top: 3px solid #a9a9a9;
+			border-bottom: 1px solid #a9a9a9;
+		}
+
+		#timerbutton
+		{
+			border-bottom-left-radius: 10px;
+		}
+
+		#restartbutton
+		{
+			border-right: 0;
+			border-left: 0;
+		}
+
+		#clearbutton
+		{
+			border-bottom-right-radius: 10px;
+		}
+
+		.centered
+		{
+			position: fixed; /* TODO: fix no scrolling */
+			top: 50%;
+			left: 50%;
+
+			-webkit-transform: translate(-50%, -50%);
+			   -moz-transform: translate(-50%, -50%);
+			    -ms-transform: translate(-50%, -50%);
+			     -o-transform: translate(-50%, -50%);
+			        transform: translate(-50%, -50%);
+		}
+
+		input[type=number]
+		{
+			-moz-appearance: textfield;
+		}
+
+		input::-webkit-outer-spin-button,
+		input::-webkit-inner-spin-button
+		{
+			margin: 0;
+			-webkit-appearance: none;
+		}
+
+		#myList input {
+			width: 200px;
+		}
+		#myList .TimerBlock input {
+			width: 100px;
+		}
+		.TimerBlock {
+			background: lightblue;
+		}
+		.RepeatBlock {
+			background: pink;
+		}
+		.MessageBlock {
+			background: lightgreen;
+		}
+	</style>
+	<script>
+		window.onbeforeunload = function(e) {
+			// check if a timer is still running and inform the user
+			if (document.getElementById('timerbutton').innerHTML == 'Stop Timer') {
+				return "You currently have a timer running.";
+			}
+		}
+
+		window.onload = function() {
+			var tb = document.getElementById('timerbutton');
+			tb.repeatTimes = 0;  // setup
+
+			// check if it's safari 5 because sound is bugged
+			// safari 8 is still broken
+			if (!tb.tickLoop) {
+				if (!!navigator.userAgent.match(' Safari/')
+						&& !navigator.userAgent.match(' Chrom')
+						&& !!navigator.userAgent.match(' Version/5.'))
+					tb.tickLoop = new Audio('tick.mp3');
+				else
+					tb.tickLoop = new Audio('tick_normal.mp3');
+				tb.tickLoop.loop = 1;
+			}
+			if (!tb.beepdone) {
+				tb.beepdone = new Audio('beep.mp3');
+				tb.beepdone.loop = 1;
+			}
+
+			// Firefox uses some quick refresh thing and doesn't undo the disabling
+			disableControls(0);
+
+			document.getElementById('minutebox').select();
+		}
+
+		function checkValidNumber(number) {
+			//    empty || string
+			if (!number || isNaN(number))
+				number = 0;
+			// no decimals or negatives
+			return Math.ceil(Math.abs(number));
+		}
+
+		function setTimer() {
+			var boxMin = document.getElementById('minutebox'),
+				boxSec = document.getElementById('secondbox'),
+				p = document.getElementById('progress'),
+				tb = document.getElementById('timerbutton'),
+				list = document.getElementById("mylist");
+
+			stopBeep();
+
+			boxMin.value = checkValidNumber(boxMin.value);
+			boxSec.value = checkValidNumber(boxSec.value);
+			if (boxMin.value == 0 && boxSec.value == 0) {
+				// allow starting timer from the blocks
+				if(list.children[0])
+					setNextTimer(getNextListItem());
+				else
+					return;
+			}
+			if (boxSec.value >= 60) {
+				boxMin.value += (boxSec.value - (boxSec.value % 60)) / 60;
+				boxSec.value = boxSec.value % 60;
+			}
+
+			var minutes = boxMin.value, seconds = boxSec.value;
+
+			if (tb.innerHTML == 'Start Timer') {
+				if (Number(minutes) !== Number(tb.pauseTimeMin)
+						|| Number(seconds) !== Number(tb.pauseTimeSec)) {
+					resetBkgd();  // if values have changed, reset the bkgd
+					tb.resetMin = minutes;  // also set the new restart values
+					tb.resetSec = seconds;
+				}
+
+				if (document.getElementById('playtick').checked)
+					tb.tickLoop.play();
+
+				disableControls(1);
+
+				tb.innerHTML = 'Stop Timer';
+				// countdown("countdown", minutes, seconds);  // too fast
+				// background doesn't want to reset in time
+				setTimeout(countdown, 15, minutes, seconds);
+
+				// NOTE: fixes Firefox not being able to use return to stop when return is used to start
+				setTimeout(eval, 0, "document.getElementById('timerbutton').focus()");
+			} else {
+				resetTimer();
+				disableControls(0);
+				boxSec.select();
+				tb.pauseTimeMin = minutes;
+				tb.pauseTimeSec = seconds;
+
+				// NOTE: spamming start/stop timer will make this inaccurate
+				// p.style.width = window.getComputedStyle(p).getPropertyValue('width').replace('px','')
+				//                   / window.innerWidth * 100 + '%';
+				p.style.width = (tb.pauseTimeMin * 60 + +tb.pauseTimeSec) /
+				                (tb.resetMin * 60 + +tb.resetSec) * 100 + '%';
+				setBackgroundTransition("");
+			}
+		}
+
+		function resetTimer() {
+			var tb = document.getElementById('timerbutton'),
+				cd = document.getElementById('countdown');
+
+			if(tb.tickLoop) tb.tickLoop.pause();
+
+			tb.innerHTML = 'Start Timer';
+
+			clearInterval(cd.interval);
+			cd.interval = '';
+		}
+
+		function resetTimerAll() {
+			resetTimer();
+			var tb = document.getElementById('timerbutton');
+			tb.repeatTimes = 0;
+			tb.currentElement = '';
+			disableControls(0);
+		}
+
+		function disableControls(yesno) {
+			document.getElementById('minutebox').disabled = yesno;
+			document.getElementById('secondbox').disabled = yesno;
+			document.getElementById('restartbutton').disabled = yesno;
+			document.getElementById('clearbutton').disabled = yesno;
+		}
+
+		function clearInput() {
+			var boxMin = document.getElementById('minutebox');
+			boxMin.value = "0";
+			boxMin.select();
+			document.getElementById('secondbox').value = "0";
+			stopBeep();
+			resetBkgd();
+			resetTimerAll();
+		}
+
+		function restartTimer() {
+			var tb = document.getElementById('timerbutton');
+			document.getElementById('minutebox').value = tb.resetMin ? tb.resetMin : "0";
+			document.getElementById('secondbox').value = tb.resetSec ? tb.resetSec : "0";
+			resetBkgd();
+			setTimer();
+		}
+
+		function stopBeep() {
+			var tb = document.getElementById('timerbutton');
+			if (tb.beepdone) {
+				tb.beepdone.pause();
+				tb.beepdone.currentTime = 0;
+			}
+			// delete(tb.beepdone);
+			document.getElementById('countdown').innerHTML = "&nbsp;";  // remove countdown text
+		}
+
+		function resetBkgd() {
+			setBackgroundTransition("");
+			document.getElementById('progress').style.width = '100%';
+		}
+
+		function setBackgroundTransition(arg) {
+			if (!document.getElementById('playbkgd').checked)
+				arg = "";
+
+			var p = document.getElementById('progress');
+			p.style.setProperty("-webkit-transition", arg);
+			p.style.setProperty("-moz-transition", arg);
+			p.style.setProperty("-o-transition", arg);
+			p.style.setProperty("transition", arg);
+		}
+
+		function countdown(minutes, seconds) {
+			clearInterval(document.getElementById("countdown").interval);
+
+			var boxMin = document.getElementById('minutebox'),
+				boxSec = document.getElementById('secondbox'),
+				p = document.getElementById('progress'),
+				tb = document.getElementById('timerbutton');
+
+			if (document.getElementById('playbkgd').checked) {
+				// console.log(p.style.width);
+				setBackgroundTransition((boxMin.value * 60 + Number(boxSec.value)) + 's linear');
+				p.style.width = '0%';
+				// console.log(p.style.width);
+			}
+
+			document.getElementById("countdown").interval = setInterval(function() {
+				seconds--;
+				if (minutes <= 0 && seconds <= 0) {
+
+					resetBkgd();
+					boxSec.value = 0;
+					// FIXME: if this is last item and it is a
+					//        message block, beep should play and not stop
+					if(item = getNextListItem()) {
+						if (document.getElementById('playbeep').checked)
+							tb.beepdone.play();
+						setTimeout(stopBeep, 1000);
+						resetTimer();
+						tb.innerHTML = 'Stop Timer';
+						setNextTimer(item);
+						return;
+					} else {
+						spawnNotification("Timer", "Countdown's Over!");
+						timerDone();
+						return;
+					}
+				} else if (seconds == -1) {
+					minutes--;
+					seconds = 59;
+				}
+
+				boxMin.value = minutes;
+				boxSec.value = seconds;
+			}, 1000);
+		}
+
+		function timerDone() {
+			if (document.getElementById('playbeep').checked)
+				document.getElementById('timerbutton').beepdone.play();
+			resetTimerAll();
+			document.getElementById("countdown").innerHTML = "Countdown's Over!";
+			document.getElementById("minutebox").select();
+		}
+
+		function setNextTimer(item) {
+			if(!item) return;
+
+			var list = document.getElementById("mylist"),
+				boxMin = document.getElementById('minutebox'),
+				boxSec = document.getElementById('secondbox'),
+				tb = document.getElementById('timerbutton');
+
+			tb.currentElement = item;
+
+			switch(item.className) {
+				case "TimerBlock":
+					boxMin.value = tb.resetMin = item.input.value = checkValidNumber(item.input.value);
+					boxSec.value = tb.resetSec = item.input2.value = checkValidNumber(item.input2.value);
+					if (document.getElementById('playtick').checked)
+						tb.tickLoop.play();
+					setTimeout(countdown, 15, boxMin.value, boxSec.value);
+					break;
+				case "RepeatBlock":
+					item.input.value = checkValidNumber(item.input.value);
+					if(findListItem(item) == 0) setNextTimer(getNextListItem());
+					tb.repeatTimes++
+					// If it ever goes over then it will fail
+					if(tb.repeatTimes < (+item.input.value + 1))
+						setNextTimer(findLastRepeatBlock(item));
+					else {
+						tb.repeatTimes = 0;
+						if(findListItem(item) == list.childElementCount - 1)
+							timerDone();
+						else setNextTimer(getNextListItem());
+					}
+					break;
+				case "MessageBlock":
+					if(!spawnNotification("Timer", item.input.value)) {
+						resetTimerAll();
+						return;
+					}
+					if(findListItem(item) == 0) setNextTimer(getNextListItem());
+					if(findListItem(item) == list.childElementCount - 1)
+						timerDone();
+					else setNextTimer(getNextListItem());
+					break;
+			}
+		}
+
+		// NOTE: modified https://developer.mozilla.org/en-US/docs/Web/API/notification
+		function notifyMe() {  // FIXME: notifications not working in safari
+			// Let's check if the browser supports notifications
+			if (!("Notification" in window)) {
+				alert("This browser does not support desktop notifications");
+			}
+			else Notification.requestPermission();
+		}
+		notifyMe();
+		function spawnNotification(theTitle,theBody) {
+			if (Notification.permission !== 'granted') {
+				if(confirm(theBody))
+					return 1;
+				return 0;
+			}
+			var options = {
+				body: theBody
+			}
+			var n = new Notification(theTitle,options);
+		}
+
+
+		function findLastRepeatBlock(element) {
+			var list = document.getElementById("mylist");
+			for(var i = findListItem(element) - 1; i > 0; i--)
+				if(list.children[i].className == "RepeatBlock")
+					return list.children[i + 1];
+			return list.children[0];  // i = 0, last item
+		}
+
+		// List items
+		function findListItem(element) {
+			var list = document.getElementById("mylist"), i = 0, tryi = 0;
+			if(!element) return -1;
+			while( list.children[i] != element ) {
+				i++;
+				tryi++;
+				if(tryi > 120) {
+					alert("Nonexistent Block");
+					return;
+				}
+			}
+			// console.log(i);
+			return i;
+		}
+		function moveListItem(element, updown) {
+			element = element.parentNode;
+			var list = document.getElementById("mylist"), i = findListItem(element);
+			if((i == 0 && updown) || (i == (list.childElementCount - 1) && !updown))
+				return;
+			// if(i == 1 && updown && (list.children[i].className == 'MessageBlock' ||
+			// 		(list.children[i].className == 'RepeatBlock')))
+			// 	return;
+
+			if(updown)  list.insertBefore(list.children[i], list.children[i-1]);
+			if(!updown) list.insertBefore(list.children[i], list.children[i+2]);
+		}
+
+		function deleteListItem(element) {
+			element = element.parentNode;
+			element.parentNode.removeChild(element);
+		}
+
+		function clearAllListItem() {
+			var list = document.getElementById("mylist");
+			while(list.children[0])
+				deleteListItem(list.children[0].input);
+				// the function actually deletes the parent, so we
+				//     give it a sub element (.input is a var referring to it)
+		}
+
+		// NOTE: modified stackoverflow.com/questions/14446447/javascript-read-local-text-file
+		var openFile = function(event) {
+			var input = event.target;
+			var reader = new FileReader();
+			reader.onload = function(){
+				text = reader.result;
+				// NOTE: stackoverflow.com/questions/5034781/js-regex-to-split-by-line
+				blocks = text.match(/[^\r\n]+/g);
+				for(var i = 0; i < blocks.length; i++) {
+					var blockInfo = blocks[i].split(" ");
+					if(blockInfo[0] == "TimerBlock")
+						addListItem("TimerBlock", blockInfo[1], blockInfo[2]);
+					else if(blockInfo[0] == "RepeatBlock")
+						addListItem("RepeatBlock", blockInfo[1]);
+					else if(blockInfo[0] == "MessageBlock")
+						addListItem("MessageBlock", blocks[i].substring(13));
+						else continue;
+				}
+			};
+			reader.readAsText(input.files[0]);
+		};
+
+		// NOTE: stackoverflow.com/questions/12274748/
+		// setting-multiple-attributes-for-an-element-at-once-with-javascript
+		function setAttributes(el, attrs) {
+			for(var key in attrs) {
+				el.setAttribute(key, attrs[key]);
+			}
+		}
+
+		function addListItem(type, value1, value2) {
+			var list = document.getElementById("mylist");
+
+			if(list.childElementCount == 0 && (type == 'Repeat' || type == 'Message')) return;
+			var newdiv = document.createElement('div');
+				var buttonR = document.createElement('button');
+					buttonR.setAttribute('onclick', 'deleteListItem(this)');
+					buttonR.innerHTML = '&#10006;';
+					newdiv.appendChild(buttonR);
+				var buttonU = document.createElement('button');
+					buttonU.setAttribute('onclick', 'moveListItem(this,1)');
+					buttonU.innerHTML = '&#9650;';
+					newdiv.appendChild(buttonU);
+				var buttonD = document.createElement('button');
+					buttonD.setAttribute('onclick', 'moveListItem(this,0)');
+					buttonD.innerHTML = '&#9660;';
+					newdiv.appendChild(buttonD);
+
+			switch(type) {
+				case "TimerBlock":
+					newdiv.setAttribute('class','TimerBlock');
+					var input = document.createElement('input');
+						setAttributes(input, {'type': 'number', 'min': 0, 'step': 1, 'value': 0});
+						if(value1) input.value = value1;
+						newdiv.appendChild(input);
+						newdiv.input = input;
+					var input2 = document.createElement('input');
+						setAttributes(input2, {'type': 'number', 'min': 0, 'step': 1, 'value': 0});
+						if(value2) input2.value = value2;
+						newdiv.appendChild(input2);
+						newdiv.input2 = input2;
+					list.appendChild(newdiv);
+					break;
+				case "RepeatBlock":
+					newdiv.setAttribute('class','RepeatBlock');
+					var input = document.createElement('input');
+						setAttributes(input, {'type': 'number', 'min': -1, 'step': 1, 'value': 1});
+						if(value1) input.value = value1;
+						newdiv.appendChild(input);
+						newdiv.input = input;
+					list.appendChild(newdiv);
+					// was thinking about having only one repeat per timer list
+					// list.insertBefore(newdiv, list.children[0]);
+					break;
+				case "MessageBlock":
+					newdiv.setAttribute('class','MessageBlock');
+					var input = document.createElement('input');
+						input.setAttribute('value', "Time's up!");
+						if(value1) input.value = value1;
+						newdiv.appendChild(input);
+						newdiv.input = input;
+					list.appendChild(newdiv);
+					break;
+			}
+		}
+
+		function getAllListItem() {
+			var list = document.getElementById("mylist"),
+				i = 0, tryi = 0, getAll = '';
+			while( i != list.childElementCount ) {
+				getAll += list.children[i].className + ' ' +
+				          list.children[i].input.value +
+				          (list.children[i].input2 ? ' ' + list.children[i].input2.value : '')  + '\n';
+				i++;
+
+				tryi++;
+				if(tryi > 120) {
+					alert("Surpassed 120 try limit");
+					return;
+				}
+			}
+			alert('Copy the following into a plain text file:\n\n' + getAll);
+		}
+
+		function getNextListItem() {
+			var list = document.getElementById("mylist"), tb = document.getElementById('timerbutton'), i;
+			if(!tb.currentElement) return tb.currentElement = list.children[0];
+			var i = findListItem(tb.currentElement);
+			if(i + 1 != list.childElementCount) return list.children[i+1]
+		}
+	</script>
+</head>
+<!--NOTE: event.keyCode==32 don't use spacebar otherwise cannot (un)check checkboxes
+    NOTE: not setting this causes math to make it NaN-->
+<body onclick="stopBeep()" onkeydown="if(event.keyCode==13)setTimer();">
+	<div id="progress" style="position:absolute;top:0;bottom:0;
+	                          background-color:#3573FF;width:100%;z-index:-1;"></div>
+	<center>
+		<div class="centered" style="width: 300px;">
+			<div id="countdown">&nbsp;</div>
+			<input id="minutebox" type="number" min="0" value="0">
+			<input id="secondbox" type="number" min="0" value="0" autofocus>
+			<button id="timerbutton" onclick="setTimer()">Start Timer</button>
+			<button id="restartbutton" onclick="restartTimer()">Restart Timer</button>
+			<button id="clearbutton" onclick="clearInput()">Clear Input</button>
+			<div style="clear:both"></div>
+			<label style="font-size: 14px">
+				<input type="checkbox" id="playtick" checked>Play Tick</label>
+			|
+			<label style="font-size: 14px">Play Beep
+				<input type="checkbox" id="playbeep">
+			</label>
+			<br>
+			<label style="font-size: 14px">
+				<input type="checkbox" id="playbkgd" checked>Animate Background</label>
+			<div style="background: lightgrey">
+				<input type='file' accept='text/plain' onclick='this.value=null' onchange='openFile(event)'>
+				<br>
+				<button onclick='getAllListItem()'>Save Blocks</button>
+				<button onclick='clearAllListItem()'>Clear All</button>
+				<br>
+				<button onclick='addListItem("TimerBlock")'>Timer</button>
+				<button onclick='addListItem("RepeatBlock")'>Repeat</button>
+				<button onclick='addListItem("MessageBlock")'>Message</button>
+			</div>
+			<div id="mylist"></div>
+		</div>
+	</center>
+</body>
